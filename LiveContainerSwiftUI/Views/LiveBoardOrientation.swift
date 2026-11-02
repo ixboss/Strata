@@ -11,6 +11,9 @@ import UIKit
     }
 
     static func apply(_ next: UIInterfaceOrientationMask, window: UIWindow?, force: Bool = false) {
+        if #available(iOS 16.0, *), MultitaskDockManager.shared.immersiveGuestActive {
+            return
+        }
         let changed = mask != next
         mask = next
         let resolvedWindow = window ?? activeHostWindow()
@@ -21,12 +24,7 @@ import UIKit
             resolvedWindow?.rootViewController?.setNeedsStatusBarAppearanceUpdate()
             resolvedWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
             scene.requestGeometryUpdate(.iOS(interfaceOrientations: next)) { _ in }
-        }
-        if next == .portrait && scene.interfaceOrientation != .portrait {
-            UIDevice.current.setValue(UIInterfaceOrientation.portrait.rawValue, forKey: "orientation")
-            UIViewController.attemptRotationToDeviceOrientation()
-        } else if next == .landscape && !scene.interfaceOrientation.isLandscape {
-            UIDevice.current.setValue(UIInterfaceOrientation.landscapeRight.rawValue, forKey: "orientation")
+        } else {
             UIViewController.attemptRotationToDeviceOrientation()
         }
     }
@@ -37,11 +35,7 @@ import UIKit
     }
 
     static func restoreHostOrientation(window: UIWindow? = nil) {
-        let target = preferredHostMask()
-        apply(target, window: window, force: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            apply(preferredHostMask(), window: window, force: true)
-        }
+        apply(preferredHostMask(), window: window, force: true)
     }
 
     private static func activeHostWindow() -> UIWindow? {
@@ -61,17 +55,13 @@ struct LiveBoardOrientationLock: UIViewRepresentable {
         let token = UUID()
         var requestedMask: UIInterfaceOrientationMask = LiveBoardOrientation.preferredHostMask()
         var applied = false
-        private var observers: [NSObjectProtocol] = []
+        private var resumeObserver: NSObjectProtocol?
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            let center = NotificationCenter.default
-            observers.append(center.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-                self?.forceApply()
-            })
-            observers.append(center.addObserver(forName: Notification.Name("LiveBoardResumeController"), object: nil, queue: .main) { [weak self] _ in
-                self?.forceApply()
-            })
+            resumeObserver = NotificationCenter.default.addObserver(forName: Notification.Name("LiveBoardResumeController"), object: nil, queue: .main) { [weak self] _ in
+                self?.apply(force: true)
+            }
         }
 
         required init?(coder: NSCoder) {
@@ -79,8 +69,8 @@ struct LiveBoardOrientationLock: UIViewRepresentable {
         }
 
         deinit {
-            for observer in observers {
-                NotificationCenter.default.removeObserver(observer)
+            if let resumeObserver {
+                NotificationCenter.default.removeObserver(resumeObserver)
             }
         }
 
@@ -91,17 +81,10 @@ struct LiveBoardOrientationLock: UIViewRepresentable {
             LiveBoardOrientation.apply(requestedMask, window: window, force: force)
         }
 
-        func forceApply() {
-            apply(force: true)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.apply(force: true)
-            }
-        }
-
         override func didMoveToWindow() {
             super.didMoveToWindow()
             applied = false
-            forceApply()
+            apply()
         }
     }
     func makeUIView(context: Context) -> WindowObserver {
@@ -112,7 +95,7 @@ struct LiveBoardOrientationLock: UIViewRepresentable {
     func updateUIView(_ view: WindowObserver, context: Context) {
         if view.requestedMask != mask { view.applied = false }
         view.requestedMask = mask
-        if !view.applied { DispatchQueue.main.async { [weak view] in view?.forceApply() } }
+        if !view.applied { DispatchQueue.main.async { [weak view] in view?.apply() } }
     }
     static func dismantleUIView(_ view: WindowObserver, coordinator: ()) {
         guard LiveBoardOrientation.owner == view.token else { return }

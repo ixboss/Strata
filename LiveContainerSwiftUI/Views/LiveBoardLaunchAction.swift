@@ -38,21 +38,31 @@ extension LCAppModel {
             try appInfo.enableGameModeSupport()
             try await signApp(force: true)
         }
-        setMetalHUDRequest(useMetalHUD)
+        if useMetalHUD {
+            setMetalHUDRequest(true)
+        } else {
+            setMetalHUDRequest(nil)
+        }
         do {
             // Game Mode requests a fullscreen launch; JIT keeps following the stored preference unless forced.
             try await runApp(multitask: useGameMode ? false : multitask, forceJIT: forceJIT ? true : nil)
         } catch {
-            setMetalHUDRequest(nil)
+            if useMetalHUD { setMetalHUDRequest(nil) }
             throw error
         }
     }
 
-    /// Stores (or clears when `nil`) the one-shot Metal HUD request for this app.
+    /// Stores (or clears when `nil`) the one-shot Metal HUD request for this app without writing when already unset.
     private func setMetalHUDRequest(_ enabled: Bool?) {
         let defaults = LCUtils.appGroupUserDefault
+        let key = liveBoardAppKey(self)
         var requests = defaults.dictionary(forKey: Self.metalHUDRequestsKey) as? [String: Bool] ?? [:]
-        requests[liveBoardAppKey(self)] = enabled
-        defaults.set(requests, forKey: Self.metalHUDRequestsKey)
+        if enabled == true {
+            requests[key] = true
+            defaults.set(requests, forKey: Self.metalHUDRequestsKey)
+        } else if requests[key] != nil {
+            requests.removeValue(forKey: key)
+            defaults.set(requests, forKey: Self.metalHUDRequestsKey)
+        }
     }
 }
